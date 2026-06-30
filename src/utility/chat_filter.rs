@@ -1,20 +1,18 @@
-
+use once_cell::sync::Lazy;
 use serenity::all::ChannelId;
 use tokio::sync::RwLock;
-use once_cell::sync::Lazy;
 
 use std::sync::Arc;
 
-use crate::utility::*;
 use crate::databases::*;
 use crate::impl_singleton;
-
+use crate::utility::*;
 
 #[derive(PartialEq)]
 pub enum FilterType {
     Slur,
     Link,
-    Fine
+    Fine,
 }
 
 impl FilterType {
@@ -22,14 +20,15 @@ impl FilterType {
         match self {
             FilterType::Slur => "slur",
             FilterType::Link => "link",
-            FilterType::Fine => "fine"
-        }.to_string()
+            FilterType::Fine => "fine",
+        }
+        .to_string()
     }
 }
 
 pub struct Filter {
     pub filter_type: FilterType,
-    pub context: String
+    pub context: String,
 }
 
 pub struct ChatFilter {
@@ -39,7 +38,6 @@ pub struct ChatFilter {
 }
 
 impl ChatFilter {
-
     pub fn new() -> ChatFilter {
         ChatFilter {
             slurs: vec![
@@ -58,23 +56,29 @@ impl ChatFilter {
                 "tranny",
                 "beaner",
                 "batty boy",
-            ].into_iter().map(|slur| slur.to_string()).collect(),
+            ]
+            .into_iter()
+            .map(|slur| slur.to_string())
+            .collect(),
             domains: vec![
                 "tenor.com",
+                "klipy.com",
                 "giphy.com",
                 "discord.com",
                 "spotify.com",
-                "spotify.link"
-            ].into_iter().map(|domain| domain.to_string()).collect(),
-            music_domains: vec![
-                "youtube.com",
-                "soundcloud.com"
-            ].into_iter().map(|domain| domain.to_string()).collect()
+                "spotify.link",
+            ]
+            .into_iter()
+            .map(|domain| domain.to_string())
+            .collect(),
+            music_domains: vec!["youtube.com", "soundcloud.com"]
+                .into_iter()
+                .map(|domain| domain.to_string())
+                .collect(),
         }
     }
 
     pub async fn apply(&self, message: &MessageManager) -> Filter {
-
         // fetch channel
         let channel = message.resolve_guild_channel().await;
 
@@ -82,17 +86,21 @@ impl ChatFilter {
         if channel.is_none() {
             return Filter {
                 filter_type: FilterType::Fine,
-                context: message.payload(None, None)
+                context: message.payload(None, None),
             };
         }
         let channel = channel.unwrap();
 
         // no filtering in ticket channels
         #[cfg(feature = "tickets")]
-        if TicketHandler::get_instance().get_ticket(&channel.id).await.is_some() {
+        if TicketHandler::get_instance()
+            .get_ticket(&channel.id)
+            .await
+            .is_some()
+        {
             return Filter {
                 filter_type: FilterType::Fine,
-                context: message.payload(None, None)
+                context: message.payload(None, None),
             };
         }
 
@@ -102,22 +110,24 @@ impl ChatFilter {
         // check for slurs
         for slur in &self.slurs {
             if let Some(index) = content.find(slur) {
-
                 let chars = content.chars().collect::<Vec<_>>();
                 let len = chars.len();
 
                 // get a ±7 byte context window around the slur
-                let mut lower_bound = index.saturating_sub(             7).clamp(0, len);
+                let mut lower_bound = index.saturating_sub(7).clamp(0, len);
                 let mut upper_bound = index.saturating_add(slur.len() + 7).clamp(0, len);
 
                 // extend bounds to full words without indexing into multi-byte unicode characters
                 let mut chr: Option<&char> = None;
-                while lower_bound > 0 && ((chr.is_some() && *chr.unwrap() != ' ') || chr.is_none()) {
+                while lower_bound > 0 && ((chr.is_some() && *chr.unwrap() != ' ') || chr.is_none())
+                {
                     lower_bound -= 1;
                     chr = chars.get(lower_bound);
                 }
                 chr = None;
-                while upper_bound < len && ((chr.is_some() && *chr.unwrap() != ' ') || chr.is_none())  {
+                while upper_bound < len
+                    && ((chr.is_some() && *chr.unwrap() != ' ') || chr.is_none())
+                {
                     upper_bound += 1;
                     chr = chars.get(upper_bound);
                 }
@@ -127,36 +137,42 @@ impl ChatFilter {
                     .into_iter()
                     .collect::<String>()
                     .replace(slur, &format!("**{}**", slur));
-                let prefix = match lower_bound == 0   { true => "", false => "[…] " };
-                let suffix = match upper_bound == len { true => "", false => " […]" };
+                let prefix = match lower_bound == 0 {
+                    true => "",
+                    false => "[…] ",
+                };
+                let suffix = match upper_bound == len {
+                    true => "",
+                    false => " […]",
+                };
 
                 return Filter {
                     filter_type: FilterType::Slur,
-                    context: format!("{}{}{}", prefix, context_window, suffix)
+                    context: format!("{}{}{}", prefix, context_window, suffix),
                 };
             }
         }
 
         // fetch additional roles and channels
         let category_music: ChannelId = ConfigDB::get_instance()
-            .get("category_music").await.unwrap().into();
+            .get("category_music")
+            .await
+            .unwrap()
+            .into();
         let link_perm_roles = message.resolve_role(vec!["Level 30+", "Booster"]).await;
 
         // sometimes the role cache of a guild is randomly empty
         // in this case, we allow all users to post links
-        let has_link_perms = link_perm_roles.is_none()
-            || message.has_role(link_perm_roles.unwrap()).await;
+        let has_link_perms =
+            link_perm_roles.is_none() || message.has_role(link_perm_roles.unwrap()).await;
 
         if !has_link_perms {
-
             let url_regex = RegexManager::get_url_regex();
 
             // check for links (first perform a low-cost check)
             if url_regex.is_match(&content) {
-
                 let link = url_regex.find(&content).unwrap().as_str();
                 if !link.ends_with(".gif") {
-
                     let mut allowed_link = false;
 
                     // compare against regular list of whitelisted domains
@@ -185,7 +201,7 @@ impl ChatFilter {
                     if !allowed_link {
                         return Filter {
                             filter_type: FilterType::Link,
-                            context: link.to_string()
+                            context: link.to_string(),
                         };
                     }
                 }
@@ -194,10 +210,9 @@ impl ChatFilter {
 
         Filter {
             filter_type: FilterType::Fine,
-            context: String::new()
+            context: String::new(),
         }
     }
-
 }
 
 impl_singleton!(ChatFilter);
