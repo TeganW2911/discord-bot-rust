@@ -19,6 +19,10 @@ impl Command for DeadchatCommand {
         Box::pin(async move {
             let top_kalie = &message.get_resolver().resolve_role("Top Kalie").await.unwrap()[0];
             message.is_trial().await || message.has_role(top_kalie).await
+            let lvl40 = message.resolve_role("Level 40+").await.unwrap();
+            message.is_trial().await
+                || message.has_role(top_kalie).await
+                || message.has_role(lvl40).await
         })
     }
 
